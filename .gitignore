@@ -1,0 +1,18 @@
+# Banco de dados
+*.db
+estoque.db
+
+# Ambiente virtual do Python
+.venv/
+venv/
+env/
+
+# Arquivos de cache e logs
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Configurações locais da IDE e IA
+.vscode/
+.claude/
