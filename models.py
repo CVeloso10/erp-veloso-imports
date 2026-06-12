@@ -85,6 +85,9 @@ class Venda(Base):
     forma_pagamento = Column(String, nullable=False)
     taxa_pagamento_percentual = Column(Float, default=0.0)
     despesa_venda_extra = Column(Float, default=0.0)
+    cliente_nome = Column(String, nullable=True)
+    cliente_telefone = Column(String, nullable=True)
+    status_pagamento = Column(String, nullable=False, default="CONFIRMADO")
 
     itens = relationship(
         "ItemVenda", back_populates="venda", cascade="all, delete-orphan"

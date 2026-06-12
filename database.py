@@ -25,13 +25,15 @@ def init_db():
     # Migrations for existing databases — add columns that may not exist yet
     _migrate_add_column("pedido_compra", "nome_identificador", "VARCHAR")
     _migrate_add_column("pedido_compra", "codigo_rastreio", "VARCHAR")
+    _migrate_add_column("venda", "cliente_nome", "VARCHAR")
+    _migrate_add_column("venda", "cliente_telefone", "VARCHAR")
+    _migrate_add_column_with_default("venda", "status_pagamento", "VARCHAR", "CONFIRMADO")
 
 
 def _migrate_add_column(table: str, column: str, coltype: str) -> None:
     """Add a column to an existing table if it doesn't already exist."""
     try:
         conn = engine.connect()
-        # Check if column exists
         result = conn.exec_driver_sql(
             f"PRAGMA table_info({table})"
         )
@@ -42,4 +44,21 @@ def _migrate_add_column(table: str, column: str, coltype: str) -> None:
             )
         conn.close()
     except Exception:
-        pass  # Table may not exist yet — that is fine
+        pass
+
+
+def _migrate_add_column_with_default(table: str, column: str, coltype: str, default: str) -> None:
+    """Add a column with a default value to an existing table."""
+    try:
+        conn = engine.connect()
+        result = conn.exec_driver_sql(
+            f"PRAGMA table_info({table})"
+        )
+        cols = [row[1] for row in result]
+        if column not in cols:
+            conn.exec_driver_sql(
+                f"ALTER TABLE {table} ADD COLUMN {column} {coltype} DEFAULT '{default}'"
+            )
+        conn.close()
+    except Exception:
+        pass

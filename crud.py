@@ -328,7 +328,8 @@ def deletar_item_compra(db: Session, item_id: int) -> None:
 def obter_itens_disponiveis_para_venda(
     db: Session, produto_id: int, tamanho: str
 ) -> list[ItemCompra]:
-    """Retorna itens de compra com estoque disponível (status ENTREGUE) para um produto/tamanho."""
+    """Retorna itens de compra com estoque disponível (status ENTREGUE) p/ Pronta Entrega."""
+    from models import TipoPedidoCompra as TipoPC
     return (
         db.query(ItemCompra)
         .join(PedidoCompra)
@@ -337,6 +338,28 @@ def obter_itens_disponiveis_para_venda(
             ItemCompra.tamanho == tamanho,
             ItemCompra.quantidade_disponivel > 0,
             PedidoCompra.status == StatusPedidoCompra.ENTREGUE,
+            PedidoCompra.tipo == TipoPC.LOTE_FISICO,
+        )
+        .order_by(PedidoCompra.data_pedido.asc())
+        .all()
+    )
+
+
+def obter_itens_disponiveis_dropshipping(
+    db: Session, produto_id: int, tamanho: str
+) -> list[ItemCompra]:
+    """Retorna itens de compra disponíveis de pedidos Dropshipping para um produto/tamanho.
+    No Dropshipping, itens podem ser vendidos em qualquer status (COMPRADO, CHEGANDO, etc).
+    """
+    from models import TipoPedidoCompra as TipoPC
+    return (
+        db.query(ItemCompra)
+        .join(PedidoCompra)
+        .filter(
+            ItemCompra.produto_id == produto_id,
+            ItemCompra.tamanho == tamanho,
+            ItemCompra.quantidade_disponivel > 0,
+            PedidoCompra.tipo == TipoPC.DROPSHIPPING,
         )
         .order_by(PedidoCompra.data_pedido.asc())
         .all()
@@ -390,6 +413,18 @@ def deletar_venda(db: Session, venda_id: int) -> None:
     db.commit()
 
 
+def atualizar_status_venda(db: Session, venda_id: int, novo_status: str) -> Venda:
+    venda = obter_venda(db, venda_id)
+    if not venda:
+        raise HTTPException(status_code=404, detail="Venda não encontrada")
+    if novo_status not in ("CONFIRMADO", "PENDENTE"):
+        raise HTTPException(status_code=400, detail="Status inválido. Use CONFIRMADO ou PENDENTE.")
+    venda.status_pagamento = novo_status
+    db.commit()
+    db.refresh(venda)
+    return venda
+
+
 # --- Itens da Venda ---
 
 
@@ -398,30 +433,31 @@ def criar_item_venda(db: Session, data: ItemVendaCreate) -> ItemVenda:
     if not venda:
         raise HTTPException(status_code=404, detail="Venda não encontrada")
 
-    # Validação específica para Pronta Entrega
-    if venda.tipo_venda == TipoVenda.PRONTA_ENTREGA:
-        if not data.item_compra_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Venda do tipo Pronta Entrega deve selecionar o lote de origem (item_compra_id)",
-            )
-        item_compra = (
-            db.query(ItemCompra)
-            .filter(ItemCompra.id == data.item_compra_id)
-            .first()
+    # item_compra_id obrigatório para AMBOS os tipos de venda
+    if not data.item_compra_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Selecione o lote de origem (item_compra_id) para todo item vendido, "
+            "seja Pronta Entrega ou Dropshipping.",
         )
-        if not item_compra:
-            raise HTTPException(status_code=404, detail="ItemCompra não encontrado")
 
-        if item_compra.quantidade_disponivel < data.quantidade_vendida:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Estoque insuficiente no lote. Disponível: {item_compra.quantidade_disponivel}, "
-                f"solicitado: {data.quantidade_vendida}",
-            )
+    item_compra = (
+        db.query(ItemCompra)
+        .filter(ItemCompra.id == data.item_compra_id)
+        .first()
+    )
+    if not item_compra:
+        raise HTTPException(status_code=404, detail="ItemCompra não encontrado")
 
-        # Baixa no estoque
-        item_compra.quantidade_disponivel -= data.quantidade_vendida
+    if item_compra.quantidade_disponivel < data.quantidade_vendida:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Estoque insuficiente no lote. Disponível: {item_compra.quantidade_disponivel}, "
+            f"solicitado: {data.quantidade_vendida}",
+        )
+
+    # Baixa no estoque (vale para PE e Dropshipping)
+    item_compra.quantidade_disponivel -= data.quantidade_vendida
 
     item_venda = ItemVenda(
         venda_id=data.venda_id,
@@ -571,31 +607,42 @@ def obter_reposicao(db: Session) -> list[ReposicaoRow]:
 
 
 def obter_dashboard(db: Session) -> DashboardResponse:
-    # Todos os itens de venda
-    itens_venda = db.query(ItemVenda).all()
-    total_itens = sum(iv.quantidade_vendida for iv in itens_venda)
+    # Apenas vendas CONFIRMADO entram nas métricas financeiras
+    vendas_confirmadas = (
+        db.query(Venda).filter(Venda.status_pagamento == "CONFIRMADO").all()
+    )
+    venda_ids_confirmados = set(v.id for v in vendas_confirmadas)
 
-    # Faturamento bruto
+    itens_venda_confirmados = (
+        db.query(ItemVenda)
+        .filter(ItemVenda.venda_id.in_(venda_ids_confirmados))
+        .all()
+    ) if venda_ids_confirmados else []
+
+    # Todos os itens (para contagem total de unidades vendidas)
+    itens_venda_todos = db.query(ItemVenda).all()
+    total_itens = sum(iv.quantidade_vendida for iv in itens_venda_todos)
+
+    # Faturamento bruto (apenas CONFIRMADO)
     faturamento_bruto = sum(
-        iv.valor_unitario_venda * iv.quantidade_vendida for iv in itens_venda
+        iv.valor_unitario_venda * iv.quantidade_vendida for iv in itens_venda_confirmados
     )
 
-    # Detalhes de lucro
+    # Detalhes de lucro (apenas CONFIRMADO)
     detalhes: list[LucroItemDetail] = []
     vendas_por_time: dict[str, float] = {}
     lucro_total = 0.0
     total_despesas_venda = 0.0
 
-    # IDs únicos de venda
-    venda_ids = set(iv.venda_id for iv in itens_venda)
+    # IDs únicos de venda (geral)
+    venda_ids = set(iv.venda_id for iv in itens_venda_todos)
     total_vendas = len(venda_ids)
 
-    for iv in itens_venda:
+    for iv in itens_venda_confirmados:
         detalhe = calcular_lucro_item_venda(iv, db)
         lucro_total += detalhe["lucro"]
         total_despesas_venda += detalhe["despesa_rateada"]
 
-        # Agrega vendas por time
         team = detalhe["produto_team"]
         if team:
             vendas_por_time[team] = vendas_por_time.get(team, 0.0) + detalhe["valor_venda"]
@@ -625,6 +672,15 @@ def obter_dashboard(db: Session) -> DashboardResponse:
         custo_real_unit = calcular_custo_real(i.id, db)
         custo_estoque_parado += custo_real_unit * i.quantidade_disponivel
 
+    # Valores a receber (vendas PENDENTE)
+    vendas_pendentes = (
+        db.query(Venda).filter(Venda.status_pagamento == "PENDENTE").all()
+    )
+    valores_a_receber = 0.0
+    for v in vendas_pendentes:
+        for iv in v.itens:
+            valores_a_receber += iv.valor_unitario_venda * iv.quantidade_vendida
+
     return DashboardResponse(
         faturamento_bruto=round(faturamento_bruto, 2),
         lucro_liquido_total=lucro_liquido_total,
@@ -634,6 +690,7 @@ def obter_dashboard(db: Session) -> DashboardResponse:
         total_despesas_venda=round(total_despesas_venda, 2),
         pecas_em_estoque=pecas_em_estoque,
         custo_estoque_parado=round(custo_estoque_parado, 2),
+        valores_a_receber=round(valores_a_receber, 2),
         detalhes_lucro=detalhes,
         faturamento_por_time=vendas_por_time,
     )

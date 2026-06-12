@@ -9,7 +9,9 @@ from crud import (
     atualizar_item_compra,
     atualizar_pedido_compra,
     atualizar_produto,
+    atualizar_status_venda,
     atualizar_venda,
+    calcular_custo_real,
     criar_despesa,
     criar_item_compra,
     criar_item_venda,
@@ -31,6 +33,7 @@ from crud import (
     listar_vendas,
     obter_dashboard,
     obter_estoque_atual_por_produto,
+    obter_itens_disponiveis_dropshipping,
     obter_itens_disponiveis_para_venda,
     obter_pedido_compra,
     obter_produto,
@@ -55,6 +58,7 @@ from schemas import (
     ReposicaoRow,
     VendaCreate,
     VendaResponse,
+    VendaStatusUpdate,
     VendaUpdate,
 )
 
@@ -304,17 +308,41 @@ def get_itens_disponiveis(
     result = []
     for item in itens:
         pedido = item.pedido_compra
+        nome_ped = pedido.nome_identificador or f"Pedido #{pedido.id}" if pedido else "N/A"
         result.append(
             {
                 "id": item.id,
                 "pedido_compra_id": item.pedido_compra_id,
-                "lote_label": f"Pedido #{pedido.id} - {pedido.nome_identificador or pedido.tipo.value}"
-                if pedido
-                else "N/A",
+                "lote_label": f"[{nome_ped}] - {item.produto.name} - Tam: {item.tamanho}",
                 "produto_nome": item.produto.name if item.produto else "",
                 "tamanho": item.tamanho,
                 "quantidade_disponivel": item.quantidade_disponivel,
                 "valor_unitario_compra": item.valor_unitario_compra,
+                "custo_real": calcular_custo_real(item.id, db),
+            }
+        )
+    return result
+
+
+@app.get("/api/v1/itens-dropshipping")
+def get_itens_dropshipping(
+    produto_id: int, tamanho: str, db: Session = Depends(get_db)
+):
+    itens = obter_itens_disponiveis_dropshipping(db, produto_id, tamanho)
+    result = []
+    for item in itens:
+        pedido = item.pedido_compra
+        nome_pedido = pedido.nome_identificador or f"Pedido #{pedido.id}"
+        result.append(
+            {
+                "id": item.id,
+                "pedido_compra_id": item.pedido_compra_id,
+                "lote_label": f"[{nome_pedido}] - {item.produto.name} - Tam: {item.tamanho}",
+                "produto_nome": item.produto.name if item.produto else "",
+                "tamanho": item.tamanho,
+                "quantidade_disponivel": item.quantidade_disponivel,
+                "valor_unitario_compra": item.valor_unitario_compra,
+                "custo_real": calcular_custo_real(item.id, db),
             }
         )
     return result
@@ -341,6 +369,9 @@ def get_vendas(db: Session = Depends(get_db)):
                 forma_pagamento=v.forma_pagamento,
                 taxa_pagamento_percentual=v.taxa_pagamento_percentual,
                 despesa_venda_extra=v.despesa_venda_extra,
+                cliente_nome=v.cliente_nome,
+                cliente_telefone=v.cliente_telefone,
+                status_pagamento=v.status_pagamento,
                 total_bruto=round(total_bruto, 2),
                 total_itens=len(v.itens),
             )
@@ -378,6 +409,9 @@ def post_venda(data: VendaCreate, db: Session = Depends(get_db)):
         forma_pagamento=venda.forma_pagamento,
         taxa_pagamento_percentual=venda.taxa_pagamento_percentual,
         despesa_venda_extra=venda.despesa_venda_extra,
+        cliente_nome=venda.cliente_nome,
+        cliente_telefone=venda.cliente_telefone,
+        status_pagamento=venda.status_pagamento,
         total_bruto=0.0,
         total_itens=0,
     )
@@ -404,6 +438,29 @@ def put_venda(venda_id: int, data: VendaUpdate, db: Session = Depends(get_db)):
 @app.delete("/api/v1/vendas/{venda_id}", status_code=204)
 def delete_venda(venda_id: int, db: Session = Depends(get_db)):
     deletar_venda(db, venda_id)
+
+
+@app.put("/api/v1/vendas/{venda_id}/status", response_model=VendaResponse)
+def put_venda_status(
+    venda_id: int, data: VendaStatusUpdate, db: Session = Depends(get_db)
+):
+    venda = atualizar_status_venda(db, venda_id, data.status_pagamento)
+    total_bruto = sum(
+        iv.valor_unitario_venda * iv.quantidade_vendida for iv in venda.itens
+    )
+    return VendaResponse(
+        id=venda.id,
+        data_venda=venda.data_venda,
+        tipo_venda=venda.tipo_venda.value if hasattr(venda.tipo_venda, "value") else venda.tipo_venda,
+        forma_pagamento=venda.forma_pagamento,
+        taxa_pagamento_percentual=venda.taxa_pagamento_percentual,
+        despesa_venda_extra=venda.despesa_venda_extra,
+        cliente_nome=venda.cliente_nome,
+        cliente_telefone=venda.cliente_telefone,
+        status_pagamento=venda.status_pagamento,
+        total_bruto=round(total_bruto, 2),
+        total_itens=len(venda.itens),
+    )
 
 
 # ===================================================================

@@ -106,7 +106,7 @@ def page_catalogo():
     st.header("Catálogo de Produtos")
 
     with st.expander("Cadastrar Novo Produto", expanded=False):
-        with st.form("form_produto"):
+        with st.form("form_produto", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1:
                 name = st.text_input("Nome do Produto")
@@ -251,7 +251,7 @@ def page_compras():
 
     # --- Criar novo pedido ---
     with st.expander("Novo Pedido de Compra", expanded=False):
-        with st.form("form_pedido"):
+        with st.form("form_pedido", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1:
                 tipo = st.selectbox("Tipo", ["Lote Físico", "Dropshipping"])
@@ -578,6 +578,7 @@ def page_carrinho():
                     "Forma de Pagamento",
                     ["Pix", "Cartão de Crédito", "Cartão de Débito", "Boleto", "Dinheiro", "Outro"],
                 )
+                cliente_nome = st.text_input("Nome do Cliente")
             with cv2:
                 taxa_percent = st.number_input(
                     "Taxa de Pagamento (%)", min_value=0.0, max_value=100.0, step=0.5, format="%.2f"
@@ -585,6 +586,8 @@ def page_carrinho():
                 despesa_extra = st.number_input(
                     "Despesa Extra (motoboy, etc) - R$", min_value=0.0, step=5.0, format="%.2f"
                 )
+                cliente_telefone = st.text_input("Telefone do Cliente")
+            status_pgto = st.selectbox("Status do Pagamento", ["CONFIRMADO", "PENDENTE"])
 
             if st.form_submit_button("Criar Venda"):
                 payload = {
@@ -592,6 +595,9 @@ def page_carrinho():
                     "forma_pagamento": forma_pagamento,
                     "taxa_pagamento_percentual": taxa_percent,
                     "despesa_venda_extra": despesa_extra,
+                    "cliente_nome": cliente_nome if cliente_nome else None,
+                    "cliente_telefone": cliente_telefone if cliente_telefone else None,
+                    "status_pagamento": status_pgto,
                 }
                 result = api_post("/vendas", payload)
                 if result:
@@ -608,7 +614,11 @@ def page_carrinho():
     venda_opts = {}
     for v in vendas:
         data_str = v["data_venda"][:10] if v.get("data_venda") else ""
-        venda_opts[v["id"]] = f"Venda #{v['id']} - {data_str} ({v['total_itens']} itens)"
+        cliente = v.get("cliente_nome") or ""
+        status = v.get("status_pagamento") or "CONFIRMADO"
+        tag = f"[{status}]" if status != "CONFIRMADO" else ""
+        nome_tag = f" - {cliente}" if cliente else ""
+        venda_opts[v["id"]] = f"Venda #{v['id']}{nome_tag} {tag} - {data_str} ({v['total_itens']} itens)"
 
     venda_ativa = st.session_state.get("venda_ativa")
     if venda_ativa and venda_ativa not in venda_opts:
@@ -635,16 +645,21 @@ def page_carrinho():
 
     # --- Cabeçalho da venda ---
     with st.container(border=True):
+        cliente_nome = venda_info.get("cliente_nome") or ""
+        cliente_telefone = venda_info.get("cliente_telefone") or ""
+        status_pgto = venda_info.get("status_pagamento") or "CONFIRMADO"
         sc1, sc2, sc3, sc4 = st.columns(4)
         sc1.write(f"**Venda #{selected_venda_id}**")
         sc2.write(f"**Tipo:** {venda_info['tipo_venda']}")
         sc3.write(f"**Pagamento:** {venda_info['forma_pagamento']}")
-        sc4.write(f"**Taxa:** {venda_info['taxa_pagamento_percentual']}%")
+        status_emoji = "\u2705" if status_pgto == "CONFIRMADO" else "\u23f3"
+        sc4.write(f"**Status:** {status_emoji} {status_pgto}")
 
+        cliente_tag = f"{cliente_nome} ({cliente_telefone})" if cliente_nome and cliente_telefone else cliente_nome or "-"
         desp_extra = venda_info['despesa_venda_extra']
         total_bruto = venda_info['total_bruto']
         sc5, sc6, sc7 = st.columns(3)
-        sc5.write(f"**Desp. Extra:** R$ {desp_extra:.2f}")
+        sc5.write(f"**Cliente:** {cliente_tag}")
         sc6.write(f"**Total Bruto:** R$ {total_bruto:.2f}")
         sc7.write(f"**Itens:** {venda_info['total_itens']}")
 
@@ -669,6 +684,16 @@ def page_carrinho():
                         key=f"ev_forma_{selected_venda_id}",
                     )
                 with ec2:
+                    e_cliente_nome = st.text_input(
+                        "Nome do Cliente",
+                        value=venda_info.get("cliente_nome") or "",
+                        key=f"ev_cliente_{selected_venda_id}",
+                    )
+                    e_cliente_tel = st.text_input(
+                        "Telefone do Cliente",
+                        value=venda_info.get("cliente_telefone") or "",
+                        key=f"ev_tel_{selected_venda_id}",
+                    )
                     e_taxa = st.number_input(
                         "Taxa (%)", value=float(venda_info["taxa_pagamento_percentual"]),
                         min_value=0.0, max_value=100.0, step=0.5, format="%.2f",
@@ -685,6 +710,8 @@ def page_carrinho():
                         "forma_pagamento": e_forma,
                         "taxa_pagamento_percentual": e_taxa,
                         "despesa_venda_extra": e_extra,
+                        "cliente_nome": e_cliente_nome if e_cliente_nome else None,
+                        "cliente_telefone": e_cliente_tel if e_cliente_tel else None,
                     }
                     if api_put(f"/vendas/{selected_venda_id}", payload):
                         st.success("Venda atualizada!")
@@ -696,7 +723,8 @@ def page_carrinho():
     if not produtos:
         st.warning("Cadastre produtos no Catálogo primeiro.")
     else:
-        with st.form(f"add_item_venda_{selected_venda_id}"):
+        with st.container(border=True):
+            st.markdown("**Dados do Item**")
             a1, a2 = st.columns(2)
             with a1:
                 prod_opts = {}
@@ -727,29 +755,36 @@ def page_carrinho():
                     key=f"ev_vlr_{selected_venda_id}",
                 )
 
-            # Lote de origem (obrigatório para Pronta Entrega)
+            # Lote de origem (obrigatório para TODOS os tipos de venda)
             item_compra_id = None
             if venda_info["tipo_venda"] == "Pronta Entrega":
-                st.markdown("**Seleção de Lote (Obrigatório para Pronta Entrega)**")
-                lotes = api_get(f"/itens-disponiveis?produto_id={prod_id}&tamanho={tamanho}")
-                if lotes:
-                    lote_opts = {}
-                    for l in lotes:
-                        lote_opts[l["id"]] = f"{l['lote_label']} | Disp: {l['quantidade_disponivel']} | Custo: R$ {l['valor_unitario_compra']:.2f}"
-                    item_compra_id = st.selectbox(
-                        "Selecione o lote de origem",
-                        options=list(lote_opts.keys()),
-                        format_func=lambda x: lote_opts.get(x, ""),
-                        key=f"ev_lote_{selected_venda_id}",
-                    )
-                else:
-                    st.warning("Nenhum lote disponível com estoque para este produto/tamanho.")
-                    item_compra_id = None
+                endpoint = f"/itens-disponiveis?produto_id={prod_id}&tamanho={tamanho}"
+                label = "Seleção de Lote (Pronta Entrega)"
+            else:
+                endpoint = f"/itens-dropshipping?produto_id={prod_id}&tamanho={tamanho}"
+                label = "Seleção de Lote (Dropshipping)"
 
-            submitted = st.form_submit_button("Adicionar à Venda")
-            if submitted:
-                if venda_info["tipo_venda"] == "Pronta Entrega" and not item_compra_id:
-                    st.error("Selecione o lote de origem para Pronta Entrega.")
+            st.markdown(f"**{label} — Obrigatório**")
+            lotes = api_get(endpoint)
+            if lotes:
+                lote_opts = {}
+                for l in lotes:
+                    custo_real_val = l.get('custo_real', l.get('valor_unitario_compra', 0))
+                    lote_opts[l["id"]] = "{} | Disp: {} | Custo Real: R$ {:.2f}".format(l['lote_label'], l['quantidade_disponivel'], custo_real_val)
+                item_compra_id = st.selectbox(
+                    "Selecione o lote de origem",
+                    options=list(lote_opts.keys()),
+                    format_func=lambda x: lote_opts.get(x, ""),
+                    key=f"ev_lote_{selected_venda_id}",
+                )
+            else:
+                st.warning("Nenhum lote disponível com estoque para este produto/tamanho.")
+                item_compra_id = None
+
+            btn_adicionar = st.button("Adicionar à Venda", type="primary")
+            if btn_adicionar:
+                if not item_compra_id:
+                    st.error("Selecione o lote de origem para realizar a venda.")
                 else:
                     payload = {
                         "venda_id": selected_venda_id,
@@ -781,6 +816,15 @@ def page_carrinho():
                     st.success("Item removido da venda e estoque restaurado!")
                     st.rerun()
 
+        # Confirmar pagamento se estiver PENDENTE
+        if venda_info.get("status_pagamento") == "PENDENTE":
+            st.subheader("Confirmar Pagamento")
+            if st.button("Confirmar Pagamento", type="primary", key=f"confirm_pay_{selected_venda_id}"):
+                result = api_put(f"/vendas/{selected_venda_id}/status", {"status_pagamento": "CONFIRMADO"})
+                if result:
+                    st.success(f"Venda #{selected_venda_id} confirmada!")
+                    st.rerun()
+
         col1, col2 = st.columns([1, 5])
         with col1:
             if st.button(f"Excluir Venda #{selected_venda_id}", type="secondary"):
@@ -805,12 +849,13 @@ def page_dashboard():
         return
 
     # Métricas principais
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     faturamento = data['faturamento_bruto']
     lucro = data['lucro_liquido_total']
     despesas_gerais = data['total_despesas_gerais']
     pecas = data.get('pecas_em_estoque', 0)
     custo_estoque = data.get('custo_estoque_parado', 0.0)
+    a_receber = data.get('valores_a_receber', 0.0)
     with col1:
         st.metric("Faturamento Bruto", f"R$ {faturamento:,.2f}")
     with col2:
@@ -821,6 +866,8 @@ def page_dashboard():
         st.metric("Peças em Estoque", int(pecas))
     with col5:
         st.metric("Custo Estoque Parado", f"R$ {custo_estoque:,.2f}")
+    with col6:
+        st.metric("Valores a Receber", f"R$ {a_receber:,.2f}")
 
     col4, col5, col6 = st.columns(3)
     total_vendas = data['total_vendas']

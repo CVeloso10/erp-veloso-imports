@@ -179,6 +179,9 @@ class VendaBase(BaseModel):
     forma_pagamento: str
     taxa_pagamento_percentual: float = 0.0
     despesa_venda_extra: float = 0.0
+    cliente_nome: Optional[str] = None
+    cliente_telefone: Optional[str] = None
+    status_pagamento: str = "CONFIRMADO"
 
 
 class VendaCreate(VendaBase):
@@ -190,6 +193,13 @@ class VendaUpdate(BaseModel):
     forma_pagamento: Optional[str] = None
     taxa_pagamento_percentual: Optional[float] = None
     despesa_venda_extra: Optional[float] = None
+    cliente_nome: Optional[str] = None
+    cliente_telefone: Optional[str] = None
+    status_pagamento: Optional[str] = None
+
+
+class VendaStatusUpdate(BaseModel):
+    status_pagamento: str
 
 
 class VendaResponse(VendaBase):
@@ -296,5 +306,6 @@ class DashboardResponse(BaseModel):
     total_despesas_venda: float = 0.0
     pecas_em_estoque: int = 0
     custo_estoque_parado: float = 0.0
+    valores_a_receber: float = 0.0
     detalhes_lucro: list[LucroItemDetail] = []
     faturamento_por_time: dict[str, float] = {}
